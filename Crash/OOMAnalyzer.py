@@ -1,7 +1,8 @@
 # coding=utf-8
-
+# python3
 import os
 import json
+import sys
 from optparse import OptionParser
 
 def hum_convert(value):
@@ -11,6 +12,12 @@ def hum_convert(value):
         if (value / size) < 1:
             return "%.2f %s" % (value, units[i])
         value = value / size
+        
+def get_dYSM_uuid(path):
+    cmd = "xcrun dwarfdump --uuid "+ path
+    a = os.popen(cmd)
+    uuids = a.read().strip().lower().replace('-', '').split(" ")
+    return uuids[1]
 
 class OOMAnalyzer(object):
 
@@ -40,25 +47,34 @@ class OOMAnalyzer(object):
         # Head
         head = logJson["head"]
         app_uuid = head["app_uuid"]
+        print(f"app_uuid:{app_uuid}")
+        
+        if len(self.appDsymPath) > 0:
+            app_uuid = get_dYSM_uuid(self.appDsymPath)
+            print(f"used dYSM uuid：[{app_uuid}]")
 
         # 解析当前APP的符号
         curAppOffsets = uuid2Offsets.get(app_uuid)
+        
         if curAppOffsets is None:
+            print(f"not match [{app_uuid}]")
             return
+        print(f"curAppOffsets={len(curAppOffsets)}")
         address2SymMap = self.symbolictedAddress(self.appDsymPath, curAppOffsets)
-        print(f"address2SymMap={address2SymMap}")
+        print(f"address2SymMap={len(address2SymMap)}")
 
         # 重新构造结果
         self.recreateLog(logJson, app_uuid, address2SymMap)
 
         # 保存结果
-        outputPath = "%s/%s" % (self.inputDir, "OOM-Symbolicated.json")
+        outputPath = "%s_%s" % (os.path.splitext(self.logFileUrl)[0], "_OOM_Symbolicated.json")
         fo = open(outputPath, "w")
         fo.write(json.dumps(logJson, indent=4, ensure_ascii=False))
         fo.close()
 
         print("Done")
 
+    #获取所有stacksm->frames里面的uuid和offset
     def parseOffsets(self, logJson):
         # Items 处理
         uuid2Offsets = {}
@@ -70,6 +86,7 @@ class OOMAnalyzer(object):
             if stacks is None:
                 continue
 
+            #变量堆载
             for stackIdx in range(len(stacks)):
                 stack = stacks[stackIdx]
                 frames = stack["frames"]
@@ -87,7 +104,7 @@ class OOMAnalyzer(object):
                         uuids.index(offset)
                     except ValueError:
                         uuids.append(offset)
-        print("处理结果 uuid 数量 {len(uuid2Offsets.keys())}")
+        print("stacksm->frames 处理结果 uuid 数量 %d" % len(uuid2Offsets.keys()))
         return uuid2Offsets
 
     def symbolictedAddress(self, dsymPath, addresses, loadAddress="", isSlide=True):
@@ -111,6 +128,7 @@ class OOMAnalyzer(object):
         symbols = res.split("\n")
 
         address2SymMap = {}
+        print(f"symbolictedAddress={len(addresses)}")
         for i in range(len(addresses)):
             address2SymMap[addresses[i]] = symbols[i]
 
@@ -137,6 +155,10 @@ class OOMAnalyzer(object):
             for stackIdx in range(len(stacks)):
                 stack = stacks[stackIdx]
                 frames = stack["frames"]
+                stackSize = stack["size"]
+                StackSizeStr = hum_convert(stackSize)
+                if StackSizeStr is not None:
+                    stack["size"] = StackSizeStr
                 symbolictedFrames = []
                 for frameIdx in range(len(frames)):
                     frame = frames[frameIdx]
